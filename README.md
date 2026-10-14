@@ -9,7 +9,24 @@ Engine Prototype (Prompt Engineering)".
 It currently runs with a **fake tutor**: replies are pre-written test
 content, not a real AI model. No API costs are involved.
 
-## How to run
+## Try it online (GitHub Pages)
+
+**Live preview:** https://calvincheok.github.io/chatbot-for-teaching-programming-concepts/
+
+GitHub Pages can only host static files, not a Python server, so the `docs/`
+folder holds a version of the prototype that runs entirely in the browser.
+It uses the same teaching flow, prompts and fake tutor as the Flask version.
+Sessions are saved in each visitor's own browser (localStorage), so they
+don't move between devices and nothing is sent to a server.
+
+To publish it (one time):
+1. Push the whole project, including the `docs/` folder, to the `main` branch.
+2. On GitHub, open the repo, then **Settings > Pages**.
+3. Under **Build and deployment**, choose **Deploy from a branch**, then
+   branch `main` and folder `/docs`, and click **Save**.
+4. Wait a minute or two. The link above then works, and later pushes update it automatically.
+
+## Run the Flask version on your computer
 
 You need Python 3.10 or newer.
 
@@ -18,11 +35,13 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://127.0.0.1:5000 in a browser on a computer or phone.
+Open http://127.0.0.1:5050 in a browser on a computer or phone. (Port 5050
+is used so it doesn't clash with other local projects on 5000.)
 
 Other ways to use it:
 - `python try_in_terminal.py` lets you chat with the engine in the terminal.
-- `python -m unittest discover tests` runs the 19 automated tests.
+- `python -m unittest discover tests` runs the 19 tests for the Flask version.
+- `node tests/test_static_site.js` runs the 19 matching tests for the GitHub Pages version (Node 18 or newer).
 
 The database is saved in `data/teaching.db`. Delete that file to start fresh.
 
@@ -65,6 +84,8 @@ identifies.
 | `templates/index.html`, `static/chat.css`, `static/chat.js` | The chat page. It shows the topic list, the lesson progress track, the chosen level, quick-reply buttons and the conversation. Enter sends and Shift + Enter makes a new line. If sending fails, the message stays in the box with a "Send again" button. |
 | `try_in_terminal.py` | A terminal chat for trying the engine without the web page. |
 | `tests/test_engine.py` | 19 functional tests. |
+| `docs/` | The GitHub Pages version. `docs/js/engine.js`, `prompts.js`, `fake-provider.js` and `concepts.js` are browser copies of the Python files above. `docs/js/storage.js` saves sessions in the browser instead of SQLite, and `docs/js/app.js` is the chat page. |
+| `tests/test_static_site.js` | The same 19 tests, run against the GitHub Pages version. |
 
 ## Real, fake and not built yet
 
@@ -75,7 +96,7 @@ identifies.
 - prompts built per step
 - checks on the AI's replies
 - failure handling with resend
-- duplicate-message protection
+- duplicate-message protection (Flask version)
 - saving sessions and reopening earlier ones
 - desktop and mobile layout
 
@@ -88,7 +109,7 @@ identifies.
 - A real LLM API provider. Before choosing one, check current pricing and agree a testing budget.
 - The other topics.
 - Practice exercises with feedback (FYP2 in the proposal timeline).
-- Accounts. For now, each browser is identified by a cookie.
+- Accounts. For now, each browser is identified by a cookie (Flask) or keeps its own sessions (GitHub Pages).
 
 **Not evaluated yet.** The tests show the software follows its rules, not
 that learners understand better. That needs the pre/post concept quizzes
@@ -101,3 +122,8 @@ and the satisfaction questionnaire planned in proposal Section 4.6.
 3. Keep the API key on the server, for example in an environment variable.
 
 The engine and the page do not need to change.
+
+The GitHub Pages version can't call a real AI by itself, because an API key
+placed in browser code can be read by anyone who opens the page. Once a real
+model is connected, the site needs a backend (the Flask version hosted
+somewhere) to hold the key.

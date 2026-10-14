@@ -1,0 +1,162 @@
+/* Python Tutor: sage paper, deep green for the tutor, violet for the learner.
+   The lesson track at the top is the one strong element. */
+:root {
+  --paper: #eef2ec;
+  --surface: #ffffff;
+  --ink: #1c2a23;
+  --ink-soft: #56645b;
+  --line: #d3dcd5;
+  --green: #1f6b57;
+  --green-deep: #154d3f;
+  --green-wash: #ddede6;
+  --violet: #4e43b8;
+  --violet-wash: #eceafb;
+  --warn: #a13d2d;
+  --warn-wash: #f7e6e2;
+  --code-bg: #1e2a26;
+  --code-ink: #e6efe9;
+  --font: "Lexend", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 16px/1.6 var(--font); }
+button, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--violet); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+button {
+  cursor: pointer; border: 0; border-radius: 999px; padding: 0.55rem 1.1rem;
+  background: var(--green); color: #fff; font-weight: 500;
+}
+button:hover { background: var(--green-deep); }
+button:disabled { opacity: 0.5; cursor: progress; }
+
+/* ---------- header ---------- */
+.bar {
+  position: sticky; top: 0; z-index: 3; height: 56px;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0 1.25rem; background: var(--paper); border-bottom: 1px solid var(--line);
+}
+.home { background: none; color: var(--ink); padding: 0.3rem 0; font-weight: 600; font-size: 1.1rem; border-radius: 6px; }
+.home:hover { background: none; color: var(--green); }
+.fake-chip {
+  font-size: 0.8rem; font-weight: 500; color: #7a5a00; background: #fbf1cf;
+  padding: 0.2rem 0.65rem; border-radius: 999px;
+}
+
+/* ---------- start view ---------- */
+.start { max-width: 680px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+.start h1 { font-size: 2rem; font-weight: 600; line-height: 1.2; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
+.lead { color: var(--ink-soft); margin: 0 0 2rem; max-width: 52ch; }
+.topics, .past-list { list-style: none; margin: 0; padding: 0; }
+.topics li {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.25rem 1rem;
+  padding: 1rem 0; border-top: 1px solid var(--line);
+}
+.topics li:last-child { border-bottom: 1px solid var(--line); }
+.topic-title { font-weight: 600; font-size: 1.05rem; }
+.topic-sub { grid-column: 1; color: var(--ink-soft); font-size: 0.9rem; }
+.topics li.off .topic-title { color: var(--ink-soft); font-weight: 500; }
+.later { grid-row: 1 / span 2; grid-column: 2; font-size: 0.85rem; color: var(--ink-soft); }
+.topics li button { grid-row: 1 / span 2; grid-column: 2; }
+.past { margin-top: 2.5rem; }
+.past h2 { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.6rem; }
+.past-list li { margin-bottom: 0.5rem; }
+.past-list button {
+  width: 100%; text-align: left; border-radius: 10px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); padding: 0.7rem 1rem; display: flex; justify-content: space-between; gap: 1rem;
+}
+.past-list button:hover { border-color: var(--green); background: var(--surface); }
+.past-list .meta { color: var(--ink-soft); font-size: 0.88rem; }
+
+/* ---------- chat view ---------- */
+.chat { max-width: 760px; margin: 0 auto; padding: 0 1.25rem; min-height: calc(100vh - 56px); display: flex; flex-direction: column; }
+
+/* Lesson track: three phases; the first holds one dot per diagnostic question. */
+.sticky-head { position: sticky; top: 56px; z-index: 2; background: var(--paper); padding-bottom: 0.4rem; }
+.track {
+  display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 6px; padding: 0.9rem 0 0.7rem;
+}
+.phase { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; color: var(--ink-soft); }
+.phase .bar-line { height: 6px; border-radius: 3px; background: var(--line); display: flex; gap: 3px; overflow: hidden; }
+.phase .bar-line span { flex: 1; background: var(--line); }
+.phase .bar-line span.filled { background: var(--green); }
+.phase.done .bar-line, .phase.done .bar-line span { background: var(--green); }
+.phase.now { color: var(--ink); font-weight: 500; }
+.phase.now .bar-line { background: var(--violet-wash); }
+.phase.now:not(.dots) .bar-line { background: linear-gradient(90deg, var(--violet) 0 50%, var(--violet-wash) 50%); }
+
+.level {
+  font-size: 0.85rem; color: var(--green-deep); background: var(--green-wash);
+  padding: 0.35rem 0.8rem; border-radius: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.messages { flex: 1; padding: 0.75rem 0 1rem; }
+.msg { display: flex; flex-direction: column; margin: 0 0 1rem; max-width: 100%; }
+.msg .body { padding: 0.75rem 1rem; border-radius: 16px; overflow-wrap: anywhere; }
+.msg.tutor .body { background: var(--surface); border-top-left-radius: 4px; max-width: 92%; box-shadow: 0 1px 0 var(--line); }
+.msg.learner { align-items: flex-end; }
+.msg.learner .body { background: var(--violet); color: #fff; border-top-right-radius: 4px; max-width: 80%; white-space: pre-wrap; }
+.msg.app { align-items: center; }
+.msg.app .body { font-size: 0.88rem; color: var(--ink-soft); background: none; padding: 0.25rem 0.5rem; text-align: center; max-width: 60ch; }
+.msg .body p { margin: 0 0 0.6rem; }
+.msg .body p:last-child { margin-bottom: 0; }
+.msg .body ul { margin: 0.3rem 0 0.7rem; padding-left: 1.25rem; }
+.msg .body li { margin: 0.15rem 0; }
+.msg .stamp { font-size: 0.75rem; color: var(--ink-soft); margin-top: 0.2rem; padding: 0 0.3rem; }
+
+code { font-family: var(--mono); font-size: 0.88em; background: var(--green-wash); color: var(--green-deep); padding: 0.05rem 0.35rem; border-radius: 5px; }
+.msg.learner code { background: rgba(255, 255, 255, 0.18); color: #fff; }
+pre { background: var(--code-bg); color: var(--code-ink); padding: 0.8rem 1rem; border-radius: 10px; overflow-x: auto; margin: 0.6rem 0 0.8rem; font-size: 0.9rem; line-height: 1.55; }
+pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+.typing { display: inline-flex; gap: 5px; padding: 0.9rem 1rem; background: var(--surface); border-radius: 16px; border-top-left-radius: 4px; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-soft); opacity: 0.4; }
+@media (prefers-reduced-motion: no-preference) {
+  .typing span { animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 50% { opacity: 1; } }
+}
+
+.quick { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+.quick:empty { display: none; }
+.quick button { background: var(--surface); color: var(--violet); border: 1.5px solid var(--violet); padding: 0.4rem 0.9rem; font-size: 0.92rem; }
+.quick button:hover { background: var(--violet-wash); }
+
+.failed {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+  background: var(--warn-wash); color: var(--warn); padding: 0.6rem 0.85rem; border-radius: 10px; margin-bottom: 0.6rem; font-size: 0.92rem;
+}
+.failed button { background: var(--warn); padding: 0.35rem 0.9rem; }
+
+.composer {
+  position: sticky; bottom: 0; display: flex; gap: 0.5rem; align-items: flex-end;
+  background: var(--paper); padding: 0.6rem 0 0.2rem;
+}
+.composer textarea {
+  flex: 1; resize: none; min-height: 48px; max-height: 160px; padding: 0.7rem 1rem;
+  border: 1.5px solid var(--line); border-radius: 24px; background: var(--surface); line-height: 1.45;
+}
+.composer textarea:focus { outline: none; border-color: var(--violet); }
+.composer button { height: 48px; padding: 0 1.3rem; }
+.hint { font-size: 0.75rem; color: var(--ink-soft); margin: 0.2rem 0 0.8rem; text-align: right; }
+
+@media (max-width: 600px) {
+  body { font-size: 15px; }
+  .start { padding-top: 2rem; }
+  .start h1 { font-size: 1.6rem; }
+  .chat { padding: 0 0.85rem; }
+  .track { grid-template-columns: 1.2fr 1fr 1fr; }
+  .phase { font-size: 0.74rem; }
+  .msg.tutor .body { max-width: 100%; }
+  .msg.learner .body { max-width: 88%; }
+  .hint { display: none; }
+}
+
+/* GitHub Pages version only */
+.storage-note { margin: 1.5rem 0 0; padding: 0.7rem 0.9rem; border-radius: 8px; background: var(--surface); color: var(--ink-soft); font-size: 0.9rem; max-width: 52ch; }
+.site-note { text-align: center; color: var(--ink-soft); font-size: 0.8rem; padding: 1rem 16px 1.5rem; }
+#chatView:not([hidden]) ~ .site-note { display: none; }

@@ -11,7 +11,7 @@ Every POST carries a request_id. If the same request arrives twice (a double
 click or a network retry), the first result is returned instead of calling
 the AI again.
 
-Run:  python app.py   (http://127.0.0.1:5000)
+Run:  python app.py   (http://127.0.0.1:5050)
 """
 
 from __future__ import annotations
@@ -129,4 +129,4 @@ def create_app(db_path: str | None = None, provider=None) -> Flask:
 
 
 if __name__ == "__main__":
-    create_app().run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)))
+    create_app().run(host="127.0.0.1", port=int(os.environ.get("PORT", 5050)))
