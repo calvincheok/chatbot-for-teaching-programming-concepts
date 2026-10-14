@@ -1,18 +1,25 @@
 /* Python Tutor chat page.
-   The page only shows what the server sends and passes learner messages on.
-   All teaching decisions are made by the backend teaching engine. */
+   The page only shows what the teaching engine returns and passes learner
+   messages on; all teaching decisions are made by the engine. It talks to
+   the engine through window.Backend: static/backend-server.js (Flask) or
+   docs/js/backend-local.js (GitHub Pages). The same file is used by both. */
 "use strict";
 
-const HEADERS = { "Content-Type": "application/json", "X-Requested-With": "fyp-chat" };
 const LEVEL_TEXT = { beginner: "a complete beginner", some_experience: "someone with some programming experience" };
 const QUICK = {
   assess: ["I don't know"],
   discuss: ["That makes sense", "I don't get it"],
+  check: ["I don't know"],
   complete: [],
+};
+const STATUS = {
+  new: { label: "Not started", action: "Start" },
+  active: { label: "In progress", action: "Continue" },
+  done: { label: "Done", action: "Review" },
 };
 
 const $ = (id) => document.getElementById(id);
-const state = { session: null, pending: null, busy: false };
+const ui = { session: null, busy: false, drafts: {}, concepts: [], progress: {} };
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -26,9 +33,8 @@ function el(tag, attrs = {}, ...kids) {
   for (const kid of kids.flat()) if (kid != null && kid !== false) node.append(kid instanceof Node ? kid : document.createTextNode(kid));
   return node;
 }
-const requestId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random()}`).replace(/[^a-z0-9]/gi, "").slice(0, 32);
+const newRequestId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random()}`).replace(/[^a-z0-9]/gi, "").slice(0, 32);
 const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-const day = (iso) => new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /* ---- safe Markdown: paragraphs, lists, **bold**, *italic*, `code`, ```code blocks``` ---- */
 function inline(text) {
@@ -53,6 +59,8 @@ function markdown(text) {
       if (!lines.length) continue;
       if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
         frag.append(el("ul", {}, lines.map((l) => el("li", {}, inline(l.replace(/^\s*[-*]\s+/, ""))))));
+      } else if (lines.every((l) => /^\s*\d+\.\s+/.test(l))) {
+        frag.append(el("ol", {}, lines.map((l) => el("li", {}, inline(l.replace(/^\s*\d+\.\s+/, ""))))));
       } else {
         const p = el("p");
         lines.forEach((l, i) => { if (i) p.append(el("br")); p.append(inline(l)); });
@@ -63,86 +71,124 @@ function markdown(text) {
   return frag;
 }
 
-/* ---- server calls ---- */
-async function call(method, url, body) {
-  let res;
-  try {
-    res = await fetch(url, { method, headers: HEADERS, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" });
-  } catch {
-    throw { message: "Can't reach the server. Check that it's running, then send again.", retryable: true };
-  }
-  let data = null;
-  try { data = await res.json(); } catch { /* handled below */ }
-  if (!res.ok) throw { message: (data && data.error) || `Something went wrong (${res.status}).`, retryable: !data || data.retryable !== false };
-  return data;
+/* ---- page address: ?session=<id> in a lesson, nothing on the topic list.
+   Each move between them is a browser history entry, so the browser's Back
+   button also returns to the topic list. ---- */
+function setAddress(sessionId, mode) {
+  const url = Backend.basePath + (sessionId ? `?session=${sessionId}` : "");
+  if (mode === "none" || location.pathname + location.search === url) return;
+  if (mode === "push") history.pushState(null, "", url);
+  else history.replaceState(null, "", url);
 }
 
-/* ---- start view ---- */
-async function showStart() {
-  state.session = null;
+function saveDraft() {
+  if (ui.session) ui.drafts[ui.session.id] = $("input").value;
+}
+
+/* ---- topic list ---- */
+async function loadProgress() {
+  const [concepts, sessions] = await Promise.all([Backend.concepts(), Backend.sessions()]);
+  ui.concepts = concepts;
+  ui.progress = {};
+  for (const s of sessions) {            // newest first, so the first one per topic is the latest
+    if (!ui.progress[s.concept]) ui.progress[s.concept] = { id: s.id, status: s.stage === "complete" ? "done" : "active" };
+  }
+}
+
+async function showStart(mode = "push") {
+  saveDraft();
+  ui.session = null;
   $("chatView").hidden = true;
   $("startView").hidden = false;
+  $("failed").hidden = true;
+  $("siteNote").hidden = !Backend.siteNote;
+  $("siteNote").textContent = Backend.siteNote || "";
+  $("storageNote").hidden = !Backend.storageNote;
+  $("storageNote").textContent = Backend.storageNote || "";
   window.scrollTo(0, 0);
-  history.replaceState(null, "", "/");
+  setAddress(null, mode);
   try {
-    const [concepts, sessions] = await Promise.all([call("GET", "/api/concepts"), call("GET", "/api/sessions")]);
-    $("topicList").replaceChildren(...concepts.map((c) => el("li", { class: c.enabled ? "" : "off" },
-      el("span", { class: "topic-title", text: c.title }),
-      el("span", { class: "topic-sub", text: c.enabled ? "Available now" : "Planned for a later phase" }),
-      c.enabled ? el("button", { type: "button", onclick: (e) => startTopic(c.id, e.currentTarget) }, "Start")
-                : el("span", { class: "later", text: "Later" }))));
-    $("pastSection").hidden = !sessions.length;
-    $("pastList").replaceChildren(...sessions.slice(0, 8).map((s) => el("li", {},
-      el("button", { type: "button", onclick: () => openSession(s.id) },
-        el("span", { text: s.concept_title }),
-        el("span", { class: "meta", text: `${s.stage === "complete" ? "Finished" : "In progress"}, ${day(s.updated_at)}` })))));
+    await loadProgress();
+    $("topicList").replaceChildren(...ui.concepts.map(topicItem));
   } catch (err) {
-    $("topicList").replaceChildren(el("li", {}, el("span", { text: err.message })));
+    $("topicList").replaceChildren(el("li", { class: "topic" }, el("span", { text: err.message })));
   }
+}
+
+function topicItem(c) {
+  const main = el("div", { class: "topic-main" },
+    el("span", { class: "topic-title", text: c.title }),
+    el("span", { class: "topic-sub", text: c.subtopics || "" }));
+  if (!c.enabled) return el("li", { class: "topic off" }, main, el("span", { class: "chip later", text: "Later phase" }));
+  const progress = ui.progress[c.id];
+  const status = progress ? progress.status : "new";
+  return el("li", { class: `topic ${status}` },
+    main,
+    el("span", { class: `chip ${status}`, text: STATUS[status].label }),
+    el("div", { class: "topic-actions" },
+      el("button", { type: "button", onclick: (e) => (progress ? openSession(progress.id) : startTopic(c.id, e.currentTarget)) }, STATUS[status].action),
+      progress ? el("button", { type: "button", class: "link", onclick: (e) => startTopic(c.id, e.currentTarget) }, "Start over") : null));
 }
 
 async function startTopic(concept, button) {
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
-    render(await call("POST", "/api/sessions", { concept, request_id: requestId() }));
+    render(await Backend.start(concept), "push");
   } catch (err) {
-    button.disabled = false;
-    button.textContent = "Try again";
-    button.title = err.message;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Try again";
+      button.title = err.message;
+    }
+    if (ui.session) alertFailed(err.message, null);
   }
 }
 
-async function openSession(id) {
-  try { render(await call("GET", `/api/sessions/${id}`)); }
-  catch (err) { alertFailed(err.message, null); }
+async function openSession(id, mode = "push") {
+  try { render(await Backend.state(id), mode); }
+  catch (err) { showStart("replace"); }
 }
 
-/* ---- chat view ---- */
-function render(data) {
-  state.session = data.session;
+/* ---- lesson view ---- */
+function render(data, mode = "replace") {
+  const s = data.session;
+  const switching = !ui.session || ui.session.id !== s.id;
+  if (switching) saveDraft();
+  ui.session = s;
   $("startView").hidden = true;
   $("chatView").hidden = false;
+  $("siteNote").hidden = true;
   $("fakeChip").hidden = !data.fake_tutor;
-  history.replaceState(null, "", `/?session=${data.session.id}`);
-  renderTrack(data.session);
-  renderLevel(data.session);
+  $("chatTitle").textContent = s.concept_title;
+  setAddress(s.id, mode);
+  renderTrack(s);
+  renderLevel(s);
   $("messages").replaceChildren(...data.messages.map(renderMessage));
-  renderQuick(data.session);
-  $("input").placeholder = data.session.stage === "assess" ? "Type your answer..." : "Reply or ask a question...";
+  renderFinish(s);
+  renderQuick(s);
+  if (switching) {
+    $("failed").hidden = true;
+    $("input").value = ui.drafts[s.id] || "";
+    autosize();
+  }
+  $("input").placeholder = s.stage === "assess" || s.stage === "check" ? "Type your answer..." : "Reply or ask a question...";
   scrollDown();
 }
 
+// Four phases: diagnostic questions, explanation, check questions, done.
 function renderTrack(s) {
-  const answered = s.stage === "assess" ? s.questions_asked - 1 : s.questions_total;
-  const dots = Array.from({ length: s.questions_total }, (_, i) => el("span", { class: i < answered ? "filled" : "" }));
-  const phase = (label, cls, line) => el("div", { class: `phase ${cls}` }, el("div", { class: "bar-line" }, line || []), el("span", { text: label }));
-  const assessCls = s.stage === "assess" ? "now dots" : "done";
-  const explainCls = s.stage === "discuss" ? "now" : s.stage === "complete" ? "done" : "";
-  const doneCls = s.stage === "complete" ? "done" : "";
+  const asked = s.stage === "assess" ? s.questions_asked - 1 : s.questions_total;
+  const needed = s.checks_needed || 2;
+  const at = s.stage === "complete" ? 4 : ["assess", "discuss", "check"].indexOf(s.stage);   // complete: all four filled
+  const dots = (n, filled) => Array.from({ length: n }, (_, i) => el("span", { class: i < filled ? "filled" : "" }));
+  const phase = (i, label, line) => el("div", { class: `phase ${i < at ? "done" : i === at ? "now" : ""}${line ? " dots" : ""}` },
+    el("div", { class: "bar-line" }, line || []), el("span", { text: label }));
   $("track").replaceChildren(
-    phase(s.stage === "assess" ? `Getting to know you (${Math.min(answered + 1, s.questions_total)} of ${s.questions_total})` : "Getting to know you", assessCls, dots),
-    phase("Explanation", explainCls),
-    phase("Understood", doneCls),
+    phase(0, s.stage === "assess" ? `Questions (${Math.min(asked + 1, s.questions_total)} of ${s.questions_total})` : "Questions",
+      dots(s.questions_total, asked)),
+    phase(1, "Explanation"),
+    phase(2, s.stage === "check" ? `Check (${s.checks_correct} of ${needed})` : "Check", dots(needed, Math.min(s.checks_correct || 0, needed))),
+    phase(3, "Done"),
   );
 }
 
@@ -159,48 +205,95 @@ function renderMessage(m) {
   const body = el("div", { class: "body" });
   if (m.role === "learner") body.textContent = m.content;
   else body.append(markdown(m.content));
-  return el("div", { class: `msg ${m.role}` }, body, m.role === "app" ? null : el("span", { class: "stamp", text: time(m.created_at) }));
+  const kind = m.task === "check_correct" ? " right" : m.task === "check_wrong" ? " wrong" : "";
+  return el("div", { class: `msg ${m.role}${kind}` }, body, m.role === "app" ? null : el("span", { class: "stamp", text: time(m.created_at) }));
+}
+
+/* ---- end of a lesson: what to do next ---- */
+function nextTopic(current) {
+  const enabled = ui.concepts.filter((c) => c.enabled);
+  const start = enabled.findIndex((c) => c.id === current);
+  for (let i = 1; i < enabled.length; i++) {
+    const c = enabled[(start + i) % enabled.length];
+    if (!ui.progress[c.id] || ui.progress[c.id].status !== "done") return c;
+  }
+  return null;
+}
+
+async function renderFinish(s) {
+  const card = $("finishCard");
+  card.hidden = true;
+  if (s.stage !== "complete") return;
+  if (!ui.concepts.length) { try { await loadProgress(); } catch { /* the buttons still work without it */ } }
+  if (!ui.session || ui.session.id !== s.id || ui.busy) return;
+  ui.progress[s.concept] = { id: s.id, status: "done" };
+  const next = nextTopic(s.concept);
+  const review = s.checks_asked > 0 && s.checks_correct < (s.checks_needed || 1);
+  card.replaceChildren(
+    el("h2", { text: review ? "Lesson finished" : "Lesson complete" }),
+    el("p", { text: review
+      ? `Some parts of ${s.concept_title} were still tricky. It's worth trying it again later with "Start over". You can still ask questions below.`
+      : `You've finished ${s.concept_title}. You can still ask questions below, or move on.` }),
+    el("div", { class: "finish-actions" },
+      next ? el("button", { type: "button", onclick: (e) => goToTopic(next.id, e.currentTarget) }, `Next topic: ${next.title}`) : null,
+      el("button", { type: "button", class: next ? "secondary" : "", onclick: () => showStart() }, "Back to all topics")));
+  card.hidden = false;
+}
+
+function goToTopic(id, button) {
+  const progress = ui.progress[id];
+  if (progress) openSession(progress.id);
+  else startTopic(id, button);
 }
 
 function renderQuick(s) {
   $("quick").replaceChildren(...(QUICK[s.stage] || []).map((text) =>
     el("button", { type: "button", onclick: () => send(text) }, text)));
+  setBusy(ui.busy);
 }
 
 function scrollDown() {
   requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
 }
 
-/* ---- sending: the text stays in the box until the server confirms ---- */
+/* ---- sending: the text stays in the box until the engine confirms ---- */
 function setBusy(busy) {
-  state.busy = busy;
+  ui.busy = busy;
   $("sendBtn").disabled = busy;
   document.querySelectorAll("#quick button").forEach((b) => { b.disabled = busy; });
 }
 
 async function send(text, retry) {
   text = (text || "").trim();
-  if (!text || state.busy || !state.session) return;
-  const request = retry || { text, id: requestId(), session: state.session.id };
-  state.pending = request;
+  if (!text || ui.busy || !ui.session) return;
+  const request = retry || { text, id: newRequestId(), session: ui.session.id };
   $("failed").hidden = true;
+  $("finishCard").hidden = true;
   setBusy(true);
   const bubble = el("div", { class: "msg learner" }, el("div", { class: "body", text: request.text }));
   const typing = el("div", { class: "msg tutor" }, el("div", { class: "typing", "aria-label": "Tutor is typing" }, el("span"), el("span"), el("span")));
   $("messages").append(bubble, typing);
   scrollDown();
+  const stillHere = () => ui.session && ui.session.id === request.session;
+  let data = null;
   try {
-    const data = await call("POST", `/api/sessions/${request.session}/messages`, { text: request.text, request_id: request.id });
-    if ($("input").value.trim() === request.text) { $("input").value = ""; autosize(); }
-    state.pending = null;
-    render(data);
+    data = await Backend.send(request.session, request.text, request.id);
   } catch (err) {
     bubble.remove();
     typing.remove();
+    setBusy(false);
+    if (!stillHere()) return;
     if (!$("input").value.trim()) { $("input").value = request.text; autosize(); }
     alertFailed(err.message, err.retryable ? () => send(request.text, request) : null);
-  } finally {
-    setBusy(false);
+    renderFinish(ui.session);
+    return;
+  }
+  setBusy(false);
+  if (stillHere()) {
+    if ($("input").value.trim() === request.text) { $("input").value = ""; autosize(); }
+    render(data);
+  } else if ((ui.drafts[request.session] || "").trim() === request.text) {
+    ui.drafts[request.session] = "";   // they left while it was sending; the message was saved anyway
   }
 }
 
@@ -223,12 +316,13 @@ $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("composer").requestSubmit(); }
 });
 $("composer").addEventListener("submit", (e) => { e.preventDefault(); send($("input").value); });
-$("homeBtn").addEventListener("click", () => {
-  if (state.busy) return;
-  if ($("input").value.trim() && !confirm("You have an unsent message. Leave it and go back to topics?")) return;
-  $("input").value = "";
-  showStart();
+// Leaving a lesson is always safe: progress is saved, and unsent text is kept for when you come back.
+$("homeBtn").addEventListener("click", () => showStart());
+$("backBtn").addEventListener("click", () => showStart());
+window.addEventListener("popstate", () => {
+  const id = new URLSearchParams(location.search).get("session");
+  if (id) openSession(id, "none"); else showStart("none");
 });
 
 const resume = new URLSearchParams(location.search).get("session");
-if (resume) openSession(resume).catch(showStart); else showStart();
+if (resume) openSession(resume, "replace"); else showStart("replace");

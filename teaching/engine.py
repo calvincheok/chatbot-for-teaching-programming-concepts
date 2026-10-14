@@ -5,11 +5,16 @@ The app, not the model, controls the order of teaching:
     assess   ask diagnostic questions one at a time (3 by default)
              -> the model classifies the learner's level from the answers
     discuss  explain at that level, then read each learner reply:
-               understood -> confirm, lesson complete
+               understood -> confirm, then move on to check
                confused   -> explain again with a different approach
                question   -> answer it, stay here
                unclear    -> ask what they mean, stay here
-    complete the learner said it makes sense; they can still ask questions
+    check    ask short check questions, one at a time, to confirm they really
+             understood. A wrong answer is followed by a targeted re-explanation
+             and another question. Beginners need 2 correct answers, learners
+             with some experience need 1. After 4 questions the lesson ends
+             anyway, marked as worth reviewing.
+    complete the lesson is finished; they can still ask questions
 
 For each turn the engine builds a structured system prompt (prompts.py) and
 sends it with the recent conversation to the provider. Model replies that
@@ -33,10 +38,17 @@ from .providers.base import LLMProvider, ProviderError
 DIAGNOSTIC_QUESTIONS = 3
 HISTORY_LIMIT = 12          # recent messages sent to the model each turn
 MAX_MESSAGE_LENGTH = 1000
+CHECKS_NEEDED = {"beginner": 2, "some_experience": 1}   # correct answers to finish
+MAX_CHECKS = 4                                           # check questions before ending anyway
 
 WELCOME = ("Hi! I'm your Python tutor. Today we'll learn about **{title}**. "
            "First I'll ask you a few quick questions, so I can explain things at the right level for you. "
            "There are no wrong answers, and \"I don't know\" is fine.")
+
+
+COMPLETE_PASSED = "Lesson complete! You answered the check questions correctly. You can keep asking questions here."
+COMPLETE_REVIEW = ("Lesson complete. Some points are still a bit shaky, so it's worth coming back to this topic later. "
+                   "You can keep asking questions here.")
 
 
 class EngineError(Exception):
@@ -168,7 +180,7 @@ class TeachingEngine:
         welcome = WELCOME.format(title=concept["title"])
         first = self._checked(lambda: check_text(self._ask(
             None, "diagnostic_question", concept, [{"role": "assistant", "content": welcome}],
-            number=1, total=DIAGNOSTIC_QUESTIONS, focus=prompts.DIAGNOSTIC_FOCUS[0])))
+            number=1, total=DIAGNOSTIC_QUESTIONS, focus=prompts.diagnostic_focus(concept, 1))))
         with self._transaction() as conn:
             ts = storage.now()
             conn.execute(
@@ -193,6 +205,8 @@ class TeachingEngine:
                 history = self._history(conn, session_id) + [{"role": "user", "content": text}]
             if session["stage"] == "assess":
                 return self._assess_turn(session, concept, history, text, learner_id)
+            if session["stage"] == "check":
+                return self._check_turn(session, concept, history, text, learner_id)
             return self._discuss_turn(session, concept, history, text, learner_id)
 
     # ---- assess: diagnostic questions, then level -----------------------------
@@ -202,7 +216,7 @@ class TeachingEngine:
         if asked < DIAGNOSTIC_QUESTIONS:
             question = self._checked(lambda: check_text(self._ask(
                 sid, "diagnostic_question", concept, history,
-                number=asked + 1, total=DIAGNOSTIC_QUESTIONS, focus=prompts.DIAGNOSTIC_FOCUS[asked % len(prompts.DIAGNOSTIC_FOCUS)])))
+                number=asked + 1, total=DIAGNOSTIC_QUESTIONS, focus=prompts.diagnostic_focus(concept, asked + 1))))
             with self._transaction() as conn:
                 self._add(conn, sid, "learner", text)
                 self._add(conn, sid, "tutor", question, "diagnostic_question")
@@ -236,25 +250,62 @@ class TeachingEngine:
             self._ask(sid, "respond", concept, history, level_description=prompts.LEVELS[level]),
             {"intent": {"understood", "confused", "question", "unclear"}, "reply": str}))
         intent = result["intent"]
-        reexplanation = None
+        reply = self._checked(lambda: check_text(result["reply"]))
+        follow_up = history + [{"role": "assistant", "content": reply}]
+        reexplanation = check_question = None
         if intent == "confused":
-            attempt = session["reexplains"] + 1
             reexplanation = self._checked(lambda: check_text(self._ask(
-                sid, "reexplain", concept, history + [{"role": "assistant", "content": result["reply"]}],
-                level_description=prompts.LEVELS[level], strategy=prompts.STRATEGIES[level], attempt=attempt)))
+                sid, "reexplain", concept, follow_up,
+                level_description=prompts.LEVELS[level], strategy=prompts.STRATEGIES[level], attempt=session["reexplains"] + 1)))
+        elif intent == "understood" and session["stage"] == "discuss":
+            check_question = self._checked(lambda: check_text(self._ask(
+                sid, "check_question", concept, follow_up,
+                level_description=prompts.LEVELS[level], number=session["checks_asked"] + 1)))
         with self._transaction() as conn:
             self._add(conn, sid, "learner", text)
-            self._add(conn, sid, "tutor", check_text(result["reply"]), f"respond:{intent}")
+            self._add(conn, sid, "tutor", reply, f"respond:{intent}")
             if reexplanation:
                 self._add(conn, sid, "tutor", reexplanation, "reexplain")
-                conn.execute("UPDATE sessions SET reexplains = reexplains + 1, stage = 'discuss' WHERE id = ?", (sid,))
+                conn.execute("UPDATE sessions SET reexplains = reexplains + 1 WHERE id = ?", (sid,))
                 self._event(conn, sid, "reexplained", {"attempt": session["reexplains"] + 1})
-            if intent == "understood" and session["stage"] != "complete":
-                conn.execute("UPDATE sessions SET stage = 'complete' WHERE id = ?", (sid,))
-                self._add(conn, sid, "app",
-                          "You've finished this explanation. You can keep asking questions here. "
-                          "(Practice exercises for this topic are planned for the next phase of the project.)", "complete")
+            if check_question:
+                self._add(conn, sid, "app", "Quick check before we finish.", "check_start")
+                self._add(conn, sid, "tutor", check_question, "check_question")
+                conn.execute("UPDATE sessions SET stage = 'check', checks_asked = checks_asked + 1 WHERE id = ?", (sid,))
                 self._event(conn, sid, "understood", {"reexplains": session["reexplains"]})
+            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (storage.now(), sid))
+        return self.state(sid, learner_id)
+
+    # ---- check: short questions to confirm understanding ----------------------
+    def _check_turn(self, session, concept, history, text, learner_id) -> dict:
+        sid = session["id"]
+        level = session["level"]
+        number = session["checks_asked"]
+        result = self._checked(lambda: parse_json_reply(
+            self._ask(sid, "grade_check", concept, history, level_description=prompts.LEVELS[level]),
+            {"correct": bool, "reply": str}))
+        correct = result["correct"]
+        feedback = self._checked(lambda: check_text(result["reply"]))
+        total_correct = session["checks_correct"] + (1 if correct else 0)
+        passed = total_correct >= CHECKS_NEEDED[level]
+        finished = passed or number >= MAX_CHECKS
+        next_question = None
+        if not finished:
+            next_question = self._checked(lambda: check_text(self._ask(
+                sid, "check_question", concept, history + [{"role": "assistant", "content": feedback}],
+                level_description=prompts.LEVELS[level], number=number + 1)))
+        with self._transaction() as conn:
+            self._add(conn, sid, "learner", text)
+            self._add(conn, sid, "tutor", feedback, "check_correct" if correct else "check_wrong")
+            conn.execute("UPDATE sessions SET checks_correct = ? WHERE id = ?", (total_correct, sid))
+            self._event(conn, sid, "check_answered", {"number": number, "correct": correct})
+            if next_question:
+                self._add(conn, sid, "tutor", next_question, "check_question")
+                conn.execute("UPDATE sessions SET checks_asked = checks_asked + 1 WHERE id = ?", (sid,))
+            else:
+                conn.execute("UPDATE sessions SET stage = 'complete' WHERE id = ?", (sid,))
+                self._add(conn, sid, "app", COMPLETE_PASSED if passed else COMPLETE_REVIEW, "complete")
+                self._event(conn, sid, "completed", {"passed": passed, "checks_asked": number, "checks_correct": total_correct})
             conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (storage.now(), sid))
         return self.state(sid, learner_id)
 
@@ -270,7 +321,10 @@ class TeachingEngine:
                 "stage": s["stage"], "level": s["level"], "level_reason": s["level_reason"],
                 "gaps": storage.loads(s["gaps"], []),
                 "questions_asked": s["questions_asked"], "questions_total": DIAGNOSTIC_QUESTIONS,
-                "reexplains": s["reexplains"], "created_at": s["created_at"], "updated_at": s["updated_at"],
+                "reexplains": s["reexplains"],
+                "checks_asked": s["checks_asked"], "checks_correct": s["checks_correct"],
+                "checks_needed": CHECKS_NEEDED.get(s["level"]), "checks_max": MAX_CHECKS,
+                "created_at": s["created_at"], "updated_at": s["updated_at"],
             },
             "messages": messages,
             "fake_tutor": self.provider.is_fake,
@@ -279,6 +333,6 @@ class TeachingEngine:
     def sessions(self, learner_id: str) -> list[dict]:
         with self._db() as conn:
             rows = conn.execute(
-                "SELECT id, concept, stage, level, created_at, updated_at FROM sessions WHERE learner_id = ? ORDER BY updated_at DESC",
+                "SELECT id, concept, stage, level, created_at, updated_at FROM sessions WHERE learner_id = ? ORDER BY updated_at DESC, rowid DESC",
                 (learner_id,)).fetchall()
         return [{**dict(r), "concept_title": CONCEPTS[r["concept"]]["title"]} for r in rows]

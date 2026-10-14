@@ -7,7 +7,7 @@ const vm = require("vm");
 const assert = require("assert/strict");
 
 const DOCS = path.join(__dirname, "..", "docs", "js");
-const FILES = ["concepts.js", "prompts.js", "fake-provider.js", "storage.js", "engine.js"];
+const FILES = ["content.js", "prompts.js", "fake-provider.js", "storage.js", "engine.js"];
 
 // A fresh "browser" for each test: its own window and localStorage.
 function browser() {
@@ -27,9 +27,9 @@ function browser() {
   return { P: ctx.PyTutor, provider, engine, store };
 }
 
-async function session() {
+async function session(topic = "variables") {
   const b = browser();
-  const first = await b.engine.start("variables");
+  const first = await b.engine.start(topic);
   b.sid = first.session.id;
   b.say = (text) => b.engine.send(b.sid, text);
   b.first = first;
@@ -97,13 +97,94 @@ const tests = {
     const b = await beginner();
     assert.equal(lastMsg(await b.say("hmm the box thing")).task, "respond:unclear");
   },
-  async "understood completes the explanation"() {
+  async "understood leads to a check question"() {
     const b = await beginner();
-    let s = await b.say("Yes, that makes sense");
+    const s = await b.say("Yes, that makes sense");
+    assert.equal(s.session.stage, "check");
+    assert.equal(lastMsg(s).task, "check_question");
+    assert.equal(s.session.checks_asked, 1);
+  },
+  async "beginner needs two correct checks"() {
+    const b = await beginner();
+    await b.say("Yes, that makes sense");
+    let s = await b.say("it's a string");
+    assert.equal(s.session.stage, "check");
+    assert.equal(s.messages.slice(-2).map((m) => m.task).join(","), "check_correct,check_question");
+    s = await b.say("8");
     assert.equal(s.session.stage, "complete");
-    assert.equal(lastMsg(s).task, "complete");
+    assert.equal(lastMsg(s).content, b.P.ENGINE.COMPLETE_PASSED);
     s = await b.say("What is a bool?");
     assert.equal(lastMsg(s).task, "respond:question");
+  },
+  async "experienced learner needs one correct check"() {
+    const b = await session();
+    await b.say("Yes, I did a Java course");
+    await b.say("A name that stores a value");
+    await b.say("3.5 is a float and hello is a string");
+    await b.say("ok got it");
+    const s = await b.say("str");
+    assert.equal(s.session.checks_needed, 1);
+    assert.equal(s.session.stage, "complete");
+  },
+  async "wrong check answer is explained then asked again"() {
+    const b = await beginner();
+    await b.say("Yes, that makes sense");
+    const s = await b.say("an int");
+    assert.equal(s.session.stage, "check");
+    assert.equal(s.messages[s.messages.length - 2].task, "check_wrong");
+    assert.match(s.messages[s.messages.length - 2].content, /quotes/);
+    assert.equal(lastMsg(s).task, "check_question");
+  },
+  async "lesson ends after max checks, marked for review"() {
+    const b = await beginner();
+    await b.say("Yes, that makes sense");
+    let s;
+    for (let i = 0; i < b.P.ENGINE.MAX_CHECKS; i++) s = await b.say("I don't know");
+    assert.equal(s.session.stage, "complete");
+    assert.equal(lastMsg(s).content, b.P.ENGINE.COMPLETE_REVIEW);
+  },
+  async "operators topic full lesson"() {
+    const b = await session("operators");
+    await b.say("never coded");
+    await b.say("no idea");
+    let s = await b.say("not sure");
+    assert.equal(s.session.level, "beginner");
+    assert.match(lastMsg(s).content, /calculator/);
+    s = await b.say("What is the difference between = and ==?");
+    assert.match(lastMsg(s).content, /compares/);
+    await b.say("ok, makes sense");
+    await b.say("3");
+    s = await b.say("2");
+    assert.equal(s.session.stage, "complete");
+  },
+  async "control flow topic full lesson"() {
+    const b = await session("control_flow");
+    await b.say("Yes, Python at school");
+    await b.say("It checks a condition and decides what to run");
+    let s = await b.say("3 times");
+    assert.equal(s.session.level, "some_experience");
+    assert.match(lastMsg(s).content, /indentation/);
+    await b.say("got it");
+    s = await b.say("big");
+    assert.equal(s.messages[s.messages.length - 2].task, "check_wrong");
+    s = await b.say("4 times");
+    assert.equal(s.session.stage, "complete");
+  },
+  async "number answers are matched exactly"() {
+    const b = await session("operators");
+    for (const text of ["no", "no", "no", "yes ok"]) await b.say(text);
+    const s = await b.say("3.33");
+    assert.equal(s.messages[s.messages.length - 2].task, "check_wrong");
+  },
+  async "sessions saved before checks existed still work"() {
+    const b = await beginner();
+    const saved = JSON.parse(b.store.get("pytutor.sessions.v1"));
+    delete saved[b.sid].checks_asked;
+    delete saved[b.sid].checks_correct;
+    b.store.set("pytutor.sessions.v1", JSON.stringify(saved));
+    const s = await b.say("Yes, that makes sense");
+    assert.equal(s.session.stage, "check");
+    assert.equal(s.session.checks_asked, 1);
   },
   async "disabled topic refused"() {
     const b = browser();
@@ -153,6 +234,7 @@ const tests = {
   async "every task prompt includes the tutor rules"() {
     const { P } = browser();
     const fields = { number: 1, total: 3, focus: "x", level_description: "y", strategy: "z", gaps: "g", attempt: 1 };
+    assert.ok(P.prompts.TASKS.check_question && P.prompts.TASKS.grade_check);
     for (const task of Object.keys(P.prompts.TASKS)) {
       const text = P.prompts.systemPrompt(task, P.CONCEPTS.variables, fields);
       assert.match(text, /Act as a teacher/);
@@ -168,11 +250,19 @@ const tests = {
     assert.match(text, /everyday analogy/);
     assert.match(text, /what a variable is/);
   },
+  async "browser prompts match the Python prompts exactly"() {
+    const { P } = browser();
+    const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "prompt_samples.json"), "utf8"));
+    for (const sample of expected) {
+      assert.equal(P.prompts.systemPrompt(sample.task, P.CONCEPTS[sample.concept], sample.fields), sample.prompt, sample.task);
+    }
+  },
   async "JSON parser"() {
     const { P, engine } = browser();
     assert.equal(engine.parseJsonReply('```json\n{"level": "beginner", "reason": "r"}\n```', { level: ["beginner"], reason: "string" }).level, "beginner");
     assert.throws(() => engine.parseJsonReply('{"level": "expert", "reason": "r"}', { level: ["beginner"], reason: "string" }), P.ProviderError);
     assert.throws(() => engine.parseJsonReply("not json", { level: ["beginner"] }), P.ProviderError);
+    assert.throws(() => engine.parseJsonReply('{"correct": "yes", "reply": "r"}', { correct: "boolean", reply: "string" }), P.ProviderError);
   },
 };
 

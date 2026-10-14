@@ -11,28 +11,31 @@
 </head>
 <body>
   <header class="bar">
-    <button class="home" id="homeBtn" type="button" aria-label="Back to topics">Python Tutor</button>
+    <button class="home" id="homeBtn" type="button" aria-label="Python Tutor, back to all topics">Python Tutor</button>
     <span class="fake-chip" id="fakeChip" hidden title="Prototype: replies are pre-written test content, not a real AI model.">Fake tutor</span>
   </header>
 
-  <!-- Topic picker and earlier sessions -->
+  <!-- Topic list -->
   <main class="start" id="startView">
     <h1>What would you like to learn?</h1>
-    <p class="lead">Pick a topic. I'll ask a few quick questions first, then explain it at your level.</p>
+    <p class="lead">Pick a topic. I'll ask a few quick questions first, explain it at your level, then check you've got it.</p>
     <ul class="topics" id="topicList"></ul>
-    <section class="past" id="pastSection" hidden>
-      <h2>Continue a session</h2>
-      <ul class="past-list" id="pastList"></ul>
-    </section>
+    <p class="storage-note" id="storageNote" hidden></p>
   </main>
 
-  <!-- Chat -->
+  <!-- Lesson -->
   <main class="chat" id="chatView" hidden>
     <div class="sticky-head">
+      <div class="chat-top">
+        <button type="button" class="back" id="backBtn"><span aria-hidden="true">&larr;</span> All topics</button>
+        <span class="chat-title" id="chatTitle"></span>
+        <span class="saved" title="You can leave at any time and continue later.">Progress saved</span>
+      </div>
       <nav class="track" id="track" aria-label="Lesson progress"></nav>
       <div class="level" id="levelNote" hidden></div>
     </div>
     <div class="messages" id="messages" aria-live="polite"></div>
+    <section class="finish" id="finishCard" hidden></section>
     <div class="quick" id="quick"></div>
     <div class="failed" id="failed" role="alert" hidden>
       <span id="failedText"></span>
@@ -46,6 +49,11 @@
     <p class="hint">Enter to send, Shift + Enter for a new line</p>
   </main>
 
+  <footer class="site-note" id="siteNote" hidden></footer>
+
+  <!-- backend -->
+  <script src="{{ url_for('static', filename='backend-server.js') }}"></script>
+  <!-- /backend -->
   <script src="{{ url_for('static', filename='chat.js') }}"></script>
 </body>
 </html>

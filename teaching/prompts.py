@@ -15,6 +15,8 @@ Tasks:
   explain              teach the concept at the chosen level and style
   respond              reply to the learner after an explanation (JSON)
   reexplain            explain again with a clearly different approach
+  check_question       ask one short question to check they really understood
+  grade_check          judge the answer; if wrong, explain that point again (JSON)
 """
 
 LEVELS = {
@@ -36,7 +38,7 @@ Rules:
 - Keep each reply short: at most about 150 words.
 - Use Python 3 for every code example, in Markdown code blocks.
 - Never shame the learner. "I don't know" is a useful answer.
-- Do not move on to other topics or give exercises; the app decides what happens next."""
+- Do only the current task. Do not move on to other topics or give exercises; the app decides what happens next."""
 
 TASKS = {
     "diagnostic_question": """Current task: find out what the learner already knows, before teaching.
@@ -66,20 +68,39 @@ Learner level: {level_description}.
 Reply with JSON only, in exactly this shape:
 {{"intent": "understood" or "confused" or "question" or "unclear", "reply": "<your reply to the learner>"}}
 For "question", answer it in the reply. For "unclear", politely ask what they mean.
-For "understood", briefly confirm the key point. For "confused", say you will explain another way (the app will do it).""",
+For "understood", briefly confirm the key point (the app will then ask a quick check question).
+For "confused", say you will explain another way (the app will do it).""",
 
     "reexplain": """Current task: the learner is still confused. Explain the concept again for {level_description},
 using a CLEARLY DIFFERENT approach from your earlier explanation (attempt {attempt}).
 Teaching strategy: {strategy}
 Focus on the part they were confused about, based on the conversation.
 End by asking whether it makes sense now.""",
+
+    "check_question": """Current task: the learner says they understand. Check it with ONE short question
+(check question {number}). Test the idea you explained, at the right difficulty for {level_description}.
+It must be answerable in one line, for example predicting the output of two or three lines of code,
+or naming a value's type. Start with a short lead-in such as "Quick check:".
+Do not repeat an earlier check question and do not give the answer.""",
+
+    "grade_check": """Current task: you asked the learner a check question (the last tutor message).
+Judge their latest message as the answer. "I don't know" counts as not correct.
+Learner level: {level_description}.
+Reply with JSON only, in exactly this shape:
+{{"correct": true or false, "reply": "<your feedback to the learner>"}}
+If correct: say so in one or two sentences and why it is right.
+If not correct: never shame them. Give the right answer, then explain the specific point they missed
+again, in a different and simpler way than before (at most about 100 words).
+Do not ask another question; the app decides what happens next.""",
 }
 
-DIAGNOSTIC_FOCUS = [
-    "Ask about their programming experience in general.",
-    "Ask what they think a variable is, in their own words.",
-    "Ask a tiny question about data types, for example what type a value like 3.5 or \"hello\" is.",
-]
+EXPERIENCE_FOCUS = "Ask about their programming experience in general."
+
+
+def diagnostic_focus(concept: dict, number: int) -> str:
+    """What diagnostic question ``number`` (1-based) should ask about."""
+    focus = [EXPERIENCE_FOCUS] + list(concept.get("focus", []))
+    return focus[(number - 1) % len(focus)]
 
 
 def system_prompt(task: str, concept: dict, **fields) -> str:

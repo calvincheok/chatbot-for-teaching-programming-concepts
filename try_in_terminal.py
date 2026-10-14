@@ -1,11 +1,12 @@
 """Chat with the teaching engine in the terminal, before the web page exists.
 
-Run:  python try_in_terminal.py
+Run:  python try_in_terminal.py [topic]     topic: variables (default), operators, control_flow
 Type your replies. Type 'quit' to stop. Uses the fake tutor, so it costs nothing.
 """
 
 import os
 import re
+import sys
 import tempfile
 
 from teaching.engine import EngineError, TeachingEngine
@@ -22,7 +23,12 @@ def main() -> None:
     db = os.path.join(tempfile.gettempdir(), "fyp_terminal_try.db")
     engine = TeachingEngine(db, FakeProvider())
     learner = "terminal-learner".ljust(32, "x")
-    state = engine.start(learner, "variables")
+    topic = sys.argv[1] if len(sys.argv) > 1 else "variables"
+    try:
+        state = engine.start(learner, topic)
+    except EngineError as exc:
+        print(exc.message)
+        return
     for m in state["messages"]:
         show(m)
     seen = len(state["messages"])
@@ -43,7 +49,8 @@ def main() -> None:
                 show(m)
         seen = len(state["messages"])
         s = state["session"]
-        print(f"\n  (stage: {s['stage']}, level: {s['level'] or 'not decided yet'}, re-explanations: {s['reexplains']})")
+        print(f"\n  (stage: {s['stage']}, level: {s['level'] or 'not decided yet'}, re-explanations: {s['reexplains']}, "
+              f"checks correct: {s['checks_correct']} of {s['checks_asked']} asked)")
 
 
 if __name__ == "__main__":

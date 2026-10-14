@@ -103,7 +103,7 @@ def create_app(db_path: str | None = None, provider=None) -> Flask:
     @app.get("/api/concepts")
     @api
     def concepts():
-        return [{"id": k, "title": v["title"], "enabled": v["enabled"]} for k, v in CONCEPTS.items()]
+        return [{"id": k, "title": v["title"], "subtopics": v["subtopics"], "enabled": v["enabled"]} for k, v in CONCEPTS.items()]
 
     @app.post("/api/sessions")
     @api

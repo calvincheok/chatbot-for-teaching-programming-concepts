@@ -17,12 +17,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     learner_id TEXT NOT NULL,
     concept TEXT NOT NULL,
-    stage TEXT NOT NULL,              -- assess | discuss | complete
+    stage TEXT NOT NULL,              -- assess | discuss | check | complete
     level TEXT,                       -- beginner | some_experience
     level_reason TEXT,
     gaps TEXT NOT NULL DEFAULT '[]',
     questions_asked INTEGER NOT NULL DEFAULT 0,
     reexplains INTEGER NOT NULL DEFAULT 0,
+    checks_asked INTEGER NOT NULL DEFAULT 0,
+    checks_correct INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -76,10 +78,24 @@ def connect(path: str) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first version. Older databases get them on start-up.
+ADDED_COLUMNS = {
+    "sessions": {
+        "checks_asked": "INTEGER NOT NULL DEFAULT 0",
+        "checks_correct": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
+
+
 def init(path: str) -> None:
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
+        for table, columns in ADDED_COLUMNS.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, definition in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
     finally:
         conn.close()
 
